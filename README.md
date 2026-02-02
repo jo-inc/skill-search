@@ -75,6 +75,7 @@ skill-search sync --force
 | anthropic | github.com/anthropics/skills | ~16 | ✓ Official |
 | openai | github.com/openai/skills/.curated | ~31 | ✓ Official |
 | openai-experimental | github.com/openai/skills/.experimental | varies | ⚠ Experimental |
+| jo | github.com/jo-inc/skills | varies | ✓ Official |
 
 ## As an Agent Skill
 
