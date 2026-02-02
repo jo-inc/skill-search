@@ -251,3 +251,197 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn create_test_skill(slug: &str, registry: &str, trusted: bool) -> Skill {
+        Skill {
+            id: 0,
+            slug: slug.to_string(),
+            name: format!("{} skill", slug),
+            registry: registry.to_string(),
+            description: format!("Description for {}", slug),
+            skill_md: "# Test\nSome content".to_string(),
+            github_url: format!("https://github.com/test/{}", slug),
+            version: Some("1.0.0".to_string()),
+            stars: 0,
+            trusted,
+            updated_at: 1234567890,
+        }
+    }
+
+    #[test]
+    fn test_database_open_creates_tables() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        assert!(db.needs_initial_sync().unwrap());
+    }
+
+    #[test]
+    fn test_upsert_and_get_skill() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let skill = create_test_skill("test-skill", "clawdhub", false);
+        let id = db.upsert_skill(&skill).unwrap();
+        assert!(id > 0);
+
+        let retrieved = db.get_skill("clawdhub", "test-skill").unwrap().unwrap();
+        assert_eq!(retrieved.slug, "test-skill");
+        assert_eq!(retrieved.name, "test-skill skill");
+        assert_eq!(retrieved.registry, "clawdhub");
+        assert!(!retrieved.trusted);
+    }
+
+    #[test]
+    fn test_upsert_updates_existing_skill() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let mut skill = create_test_skill("update-test", "anthropic", true);
+        db.upsert_skill(&skill).unwrap();
+
+        skill.description = "Updated description".to_string();
+        skill.stars = 100;
+        db.upsert_skill(&skill).unwrap();
+
+        let retrieved = db.get_skill("anthropic", "update-test").unwrap().unwrap();
+        assert_eq!(retrieved.description, "Updated description");
+        assert_eq!(retrieved.stars, 100);
+    }
+
+    #[test]
+    fn test_get_skill_by_slug() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let skill = create_test_skill("slug-test", "openai", true);
+        db.upsert_skill(&skill).unwrap();
+
+        let retrieved = db.get_skill_by_slug("slug-test").unwrap().unwrap();
+        assert_eq!(retrieved.slug, "slug-test");
+        assert!(retrieved.trusted);
+    }
+
+    #[test]
+    fn test_get_skill_by_slug_not_found() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let result = db.get_skill_by_slug("nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_all_skills() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        db.upsert_skill(&create_test_skill("skill1", "clawdhub", false)).unwrap();
+        db.upsert_skill(&create_test_skill("skill2", "anthropic", true)).unwrap();
+        db.upsert_skill(&create_test_skill("skill3", "openai", true)).unwrap();
+
+        let all_skills = db.get_all_skills().unwrap();
+        assert_eq!(all_skills.len(), 3);
+    }
+
+    #[test]
+    fn test_get_skills_by_registry() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        db.upsert_skill(&create_test_skill("skill1", "clawdhub", false)).unwrap();
+        db.upsert_skill(&create_test_skill("skill2", "clawdhub", false)).unwrap();
+        db.upsert_skill(&create_test_skill("skill3", "anthropic", true)).unwrap();
+
+        let clawdhub_skills = db.get_skills_by_registry("clawdhub").unwrap();
+        assert_eq!(clawdhub_skills.len(), 2);
+
+        let anthropic_skills = db.get_skills_by_registry("anthropic").unwrap();
+        assert_eq!(anthropic_skills.len(), 1);
+    }
+
+    #[test]
+    fn test_update_stars() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let skill = create_test_skill("stars-test", "clawdhub", false);
+        db.upsert_skill(&skill).unwrap();
+
+        db.update_stars("clawdhub", "stars-test", 42).unwrap();
+
+        let retrieved = db.get_skill("clawdhub", "stars-test").unwrap().unwrap();
+        assert_eq!(retrieved.stars, 42);
+    }
+
+    #[test]
+    fn test_needs_initial_sync() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        assert!(db.needs_initial_sync().unwrap());
+
+        db.upsert_skill(&create_test_skill("skill1", "clawdhub", false)).unwrap();
+
+        assert!(!db.needs_initial_sync().unwrap());
+    }
+
+    #[test]
+    fn test_sync_state() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        assert!(db.get_last_sync("clawdhub").unwrap().is_none());
+
+        db.set_last_sync("clawdhub", 1234567890, Some("etag123")).unwrap();
+
+        let (timestamp, etag) = db.get_last_sync("clawdhub").unwrap().unwrap();
+        assert_eq!(timestamp, 1234567890);
+        assert_eq!(etag, Some("etag123".to_string()));
+    }
+
+    #[test]
+    fn test_clear_sync_state() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        db.set_last_sync("clawdhub", 1234567890, None).unwrap();
+        db.set_last_sync("anthropic", 1234567890, None).unwrap();
+
+        db.clear_sync_state().unwrap();
+
+        assert!(db.get_last_sync("clawdhub").unwrap().is_none());
+        assert!(db.get_last_sync("anthropic").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_clawdhub_slugs() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+
+        db.upsert_skill(&create_test_skill("skill1", "clawdhub", false)).unwrap();
+        db.upsert_skill(&create_test_skill("skill2", "clawdhub", false)).unwrap();
+        db.upsert_skill(&create_test_skill("skill3", "anthropic", true)).unwrap();
+
+        let slugs = db.get_clawdhub_slugs().unwrap();
+        assert_eq!(slugs.len(), 2);
+        assert!(slugs.contains(&"skill1".to_string()));
+        assert!(slugs.contains(&"skill2".to_string()));
+    }
+}

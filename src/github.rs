@@ -256,7 +256,7 @@ fn process_skill(db: &mut Database, registry: &Registry, skill_dir: &Path, skill
     Ok(())
 }
 
-fn parse_skill_frontmatter(content: &str) -> (String, String, Option<String>) {
+pub fn parse_skill_frontmatter(content: &str) -> (String, String, Option<String>) {
     let mut name = String::new();
     let mut description = String::new();
     let mut version = None;
@@ -289,4 +289,105 @@ fn parse_skill_frontmatter(content: &str) -> (String, String, Option<String>) {
     }
 
     (name, description, version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_frontmatter_complete() {
+        let content = r#"---
+name: test-skill
+description: A test skill for testing
+version: 1.0.0
+---
+
+# Test Skill
+
+Some content here.
+"#;
+        let (name, description, version) = parse_skill_frontmatter(content);
+        assert_eq!(name, "test-skill");
+        assert_eq!(description, "A test skill for testing");
+        assert_eq!(version, Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_quoted_values() {
+        let content = r#"---
+name: "quoted-skill"
+description: 'Single quoted description'
+version: "2.0"
+---
+"#;
+        let (name, description, version) = parse_skill_frontmatter(content);
+        assert_eq!(name, "quoted-skill");
+        assert_eq!(description, "Single quoted description");
+        assert_eq!(version, Some("2.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_no_version() {
+        let content = r#"---
+name: simple-skill
+description: Just a simple skill
+---
+"#;
+        let (name, description, version) = parse_skill_frontmatter(content);
+        assert_eq!(name, "simple-skill");
+        assert_eq!(description, "Just a simple skill");
+        assert!(version.is_none());
+    }
+
+    #[test]
+    fn test_parse_frontmatter_fallback_to_heading() {
+        let content = r#"# My Cool Skill
+
+This skill does cool things.
+"#;
+        let (name, description, version) = parse_skill_frontmatter(content);
+        assert_eq!(name, "My Cool Skill");
+        assert_eq!(description, "");
+        assert!(version.is_none());
+    }
+
+    #[test]
+    fn test_parse_frontmatter_empty_content() {
+        let content = "";
+        let (name, description, version) = parse_skill_frontmatter(content);
+        assert_eq!(name, "");
+        assert_eq!(description, "");
+        assert!(version.is_none());
+    }
+
+    #[test]
+    fn test_parse_frontmatter_no_frontmatter_with_heading() {
+        let content = "Some text before\n# The Heading\nMore content";
+        let (name, description, version) = parse_skill_frontmatter(content);
+        assert_eq!(name, "The Heading");
+        assert_eq!(description, "");
+        assert!(version.is_none());
+    }
+
+    #[test]
+    fn test_registries_configuration() {
+        assert_eq!(REGISTRIES.len(), 4);
+        
+        let clawdhub = &REGISTRIES[0];
+        assert_eq!(clawdhub.name, "clawdhub");
+        assert!(!clawdhub.trusted);
+        
+        let anthropic = &REGISTRIES[1];
+        assert_eq!(anthropic.name, "anthropic");
+        assert!(anthropic.trusted);
+        
+        let openai = &REGISTRIES[2];
+        assert_eq!(openai.name, "openai");
+        assert!(openai.trusted);
+        
+        let openai_exp = &REGISTRIES[3];
+        assert_eq!(openai_exp.name, "openai-experimental");
+        assert!(!openai_exp.trusted);
+    }
 }

@@ -142,3 +142,141 @@ impl SearchResult {
         format!("{}:{}", self.registry, self.slug)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{Database, Skill};
+    use tempfile::tempdir;
+
+    fn create_test_skill(slug: &str, name: &str, description: &str, registry: &str) -> Skill {
+        Skill {
+            id: 0,
+            slug: slug.to_string(),
+            name: name.to_string(),
+            registry: registry.to_string(),
+            description: description.to_string(),
+            skill_md: format!("# {}\n\n{}", name, description),
+            github_url: format!("https://github.com/test/{}", slug),
+            version: Some("1.0.0".to_string()),
+            stars: 0,
+            trusted: registry == "anthropic",
+            updated_at: 1234567890,
+        }
+    }
+
+    #[test]
+    fn test_search_index_create() {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join("index");
+        let _index = SearchIndex::open_or_create(&index_path).unwrap();
+        assert!(index_path.join("meta.json").exists());
+    }
+
+    #[test]
+    fn test_search_index_rebuild_and_search() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index_path = dir.path().join("index");
+
+        let db = Database::open(&db_path).unwrap();
+        db.upsert_skill(&create_test_skill("calendar", "Calendar Manager", "Manage your calendar events", "clawdhub")).unwrap();
+        db.upsert_skill(&create_test_skill("pdf-reader", "PDF Reader", "Read and extract PDF content", "anthropic")).unwrap();
+        db.upsert_skill(&create_test_skill("browser", "Browser Automation", "Automate browser tasks", "openai")).unwrap();
+
+        let index = SearchIndex::open_or_create(&index_path).unwrap();
+        index.rebuild(&db).unwrap();
+
+        let results = index.search("calendar", 10, None).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].slug, "calendar");
+    }
+
+    #[test]
+    fn test_search_with_registry_filter() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index_path = dir.path().join("index");
+
+        let db = Database::open(&db_path).unwrap();
+        db.upsert_skill(&create_test_skill("skill1", "Test Skill One", "A test skill", "clawdhub")).unwrap();
+        db.upsert_skill(&create_test_skill("skill2", "Test Skill Two", "Another test skill", "anthropic")).unwrap();
+
+        let index = SearchIndex::open_or_create(&index_path).unwrap();
+        index.rebuild(&db).unwrap();
+
+        let results = index.search("test skill", 10, Some("anthropic")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].registry, "anthropic");
+    }
+
+    #[test]
+    fn test_search_no_results() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index_path = dir.path().join("index");
+
+        let db = Database::open(&db_path).unwrap();
+        db.upsert_skill(&create_test_skill("calendar", "Calendar", "Calendar app", "clawdhub")).unwrap();
+
+        let index = SearchIndex::open_or_create(&index_path).unwrap();
+        index.rebuild(&db).unwrap();
+
+        let results = index.search("nonexistent xyz abc", 10, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_result_unique_key() {
+        let result = SearchResult {
+            slug: "test-skill".to_string(),
+            name: "Test Skill".to_string(),
+            description: "A test".to_string(),
+            registry: "clawdhub".to_string(),
+            score: 1.0,
+        };
+        assert_eq!(result.unique_key(), "clawdhub:test-skill");
+    }
+
+    #[test]
+    fn test_search_respects_limit() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index_path = dir.path().join("index");
+
+        let db = Database::open(&db_path).unwrap();
+        for i in 0..10 {
+            db.upsert_skill(&create_test_skill(
+                &format!("skill{}", i),
+                &format!("Test Skill {}", i),
+                "A test skill for testing",
+                "clawdhub"
+            )).unwrap();
+        }
+
+        let index = SearchIndex::open_or_create(&index_path).unwrap();
+        index.rebuild(&db).unwrap();
+
+        let results = index.search("test skill", 3, None).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_search_content_includes_skill_md() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index_path = dir.path().join("index");
+
+        let db = Database::open(&db_path).unwrap();
+        let mut skill = create_test_skill("unique", "Generic Name", "Generic description", "clawdhub");
+        skill.skill_md = "# Unique Skill\n\nThis skill handles XYZABC123 tasks.".to_string();
+        db.upsert_skill(&skill).unwrap();
+
+        let index = SearchIndex::open_or_create(&index_path).unwrap();
+        index.rebuild(&db).unwrap();
+
+        let results = index.search("XYZABC123", 10, None).unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].slug, "unique");
+    }
+}
