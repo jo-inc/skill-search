@@ -4,7 +4,7 @@ description: Search and discover agent skills across clawdhub, anthropic, openai
 compatibility: Requires git installed for cloning skill registries
 metadata:
   author: jo-inc
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # skill-search
