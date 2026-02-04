@@ -41,6 +41,14 @@ fuzzy-matcher = "0.3"
 # BM25/TF-IDF search
 tantivy = "0.22"
 
+[[bin]]
+name = "skill-search"
+path = "src/main.rs"
+
+[[bin]]
+name = "safe-skill-search"
+path = "src/bin/safe-skill-search.rs"
+
 [profile.release]
 lto = true
 codegen-units = 1
